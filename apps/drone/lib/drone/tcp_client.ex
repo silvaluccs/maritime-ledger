@@ -271,4 +271,3 @@ defmodule Drone.TcpClient do
     if String.ends_with?(message, "\n"), do: message, else: message <> "\n"
   end
 end
-

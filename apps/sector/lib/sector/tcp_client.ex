@@ -103,6 +103,14 @@ defmodule Sector.TcpClient do
   end
 
   @impl true
+  def handle_info({:tcp, socket, _data}, state) do
+    # O cliente TCP dos setores não precisa processar mensagens recebidas,
+    # as mensagens entre setores são tratadas pelo TcpServer.
+    :inet.setopts(socket, active: :once)
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info({:tcp_closed, socket}, state) do
     remove_socket_and_try_reconnect(socket, state)
   end

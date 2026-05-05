@@ -18,13 +18,16 @@ defmodule Drone.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      mod: {Drone.Application, []}
     ]
   end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:uuid_v7, "~> 0.6.0"},
       {:core, in_umbrella: true}
     ]
   end

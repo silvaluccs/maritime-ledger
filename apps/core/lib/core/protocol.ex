@@ -44,15 +44,35 @@ defmodule Core.Protocol do
       Contém o tipo da mensagem, o remetente e o destinatário.
     """
     @derive JSON.Encoder
-    defstruct [:type, :from, :to, :clock, :priority]
+    defstruct [:type, :from, :to, :clock, :priority, :request_ts]
 
     @type t :: %__MODULE__{
             type: :reply,
             from: String.t(),
             to: String.t(),
             clock: non_neg_integer(),
-            priority: non_neg_integer()
+            priority: non_neg_integer(),
+            request_ts: non_neg_integer() | nil
           }
+    def from_map(%{
+          "type" => type,
+          "from" => from,
+          "to" => to,
+          "clock" => clock,
+          "priority" => priority,
+          "request_ts" => request_ts
+        }) do
+      {:ok,
+       %__MODULE__{
+         type: String.to_existing_atom(type),
+         from: from,
+         to: to,
+         clock: clock,
+         priority: priority,
+         request_ts: request_ts
+       }}
+    end
+
     def from_map(%{
           "type" => type,
           "from" => from,
@@ -66,7 +86,8 @@ defmodule Core.Protocol do
          from: from,
          to: to,
          clock: clock,
-         priority: priority
+         priority: priority,
+         request_ts: nil
        }}
     end
 
@@ -93,6 +114,20 @@ defmodule Core.Protocol do
          from: from,
          payload: payload
        }}
+    end
+
+    def from_map(_), do: {:error, :invalid_message}
+  end
+
+  defmodule Auth do
+    @moduledoc """
+    Mensagem de autenticação usando uma passkey criptografada (hash SHA256).
+    """
+    @derive JSON.Encoder
+    defstruct [:type, :id, :passkey]
+
+    def from_map(%{"type" => "auth", "id" => id, "passkey" => passkey}) do
+      {:ok, %__MODULE__{type: :auth, id: id, passkey: passkey}}
     end
 
     def from_map(_), do: {:error, :invalid_message}

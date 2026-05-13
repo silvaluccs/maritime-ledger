@@ -42,6 +42,14 @@ defmodule Sensors.Worker do
 
     case must_connect_to_host(host_to_connect) do
       {:ok, socket} ->
+        auth_msg = %Core.Protocol.Auth{
+          type: :auth,
+          id: state.sensor_id,
+          passkey: Core.Auth.get_hashed_passkey()
+        }
+
+        :gen_tcp.send(socket, JSON.encode!(auth_msg) <> "\n")
+
         status_msg = %Core.Protocol.SensorStatus{
           type: :sensor_status,
           sensor_id: state.sensor_id,
@@ -68,7 +76,8 @@ defmodule Sensors.Worker do
 
   @impl true
   def handle_info(:generate_request, state) do
-    priority = Enum.random([0, 1])
+    # 20% de chance para Prio 1 e 80% para Prio 0
+    priority = if :rand.uniform() > 0.8, do: 1, else: 0
     reason = Sensors.Reasons.get_random()
 
     request_msg = %Core.Protocol.SensorRequest{

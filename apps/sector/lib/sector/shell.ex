@@ -3,8 +3,8 @@ defmodule Sector.Shell do
   Interface simples para interagir com o nó no terminal do IEx.
   """
 
-  def request do
-    Sector.Node.request_mission()
+  def request(priority \\ nil) do
+    Sector.Node.request_mission(priority)
   end
 
   def queue do
@@ -25,10 +25,11 @@ defmodule Sector.Shell do
     IO.puts("""
 
     === COMANDOS DO SHELL DO SETOR ===
-    request - Cria uma requisição para a seção crítica/drone.
-    queue   - Visualiza a fila de requisições.
-    help    - Mostra essa mensagem de ajuda.
-    exit    - Encerra o nó.
+    request       - Cria uma requisição (prioridade aleatória).
+    request <prio>- Cria uma requisição com prioridade específica (ex: request 1).
+    queue         - Visualiza a fila de requisições.
+    help          - Mostra essa mensagem de ajuda.
+    exit          - Encerra o nó.
     ==================================
     """)
   end
@@ -53,18 +54,45 @@ defmodule Sector.Shell do
     data = IO.gets("sector-shell> ")
 
     if data != :eof do
-      case String.trim(data) do
-        "request" -> request()
-        "queue" -> queue()
-        "help" -> help()
-        "exit" -> System.halt(0)
-        "" -> :ok
-        # Ignora lixos do terminal ANSI como setas (up/down/left/right)
-        "\e" <> _ -> :ok
-        _ -> IO.puts("Comando inválido. Digite 'help'.")
-      end
-
+      process_command(String.trim(data))
       loop()
+    end
+  end
+
+  defp process_command(cmd) do
+    cond do
+      cmd == "request" ->
+        request(nil)
+
+      String.starts_with?(cmd, "request ") ->
+        handle_request_with_prio(cmd)
+
+      cmd == "queue" ->
+        queue()
+
+      cmd == "help" ->
+        help()
+
+      cmd == "exit" ->
+        System.halt(0)
+
+      cmd == "" ->
+        :ok
+
+      String.starts_with?(cmd, "\e") ->
+        :ok
+
+      true ->
+        IO.puts("Comando inválido. Digite 'help'.")
+    end
+  end
+
+  defp handle_request_with_prio(cmd) do
+    [_, prio_str] = String.split(cmd, " ", parts: 2)
+
+    case Integer.parse(prio_str) do
+      {prio, ""} when prio in [0, 1, 2] -> request(prio)
+      _ -> IO.puts("Prioridade inválida. Use 0, 1 ou 2.")
     end
   end
 end

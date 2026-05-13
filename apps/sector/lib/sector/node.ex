@@ -49,8 +49,8 @@ defmodule Sector.Node do
     GenServer.cast(__MODULE__, {:sensor_disconnected, sensor_id})
   end
 
-  def request_mission do
-    send(Process.whereis(__MODULE__), :try_critical_section)
+  def request_mission(priority \\ nil) do
+    send(Process.whereis(__MODULE__), {:try_critical_section, priority})
   end
 
   def get_queue do
@@ -74,6 +74,7 @@ defmodule Sector.Node do
       requesting?: false,
       in_critical_section?: false,
       request_ts: nil,
+      mission_ts: nil,
       request_priority: 0,
       request_for_process: nil,
       awaiting_replies: MapSet.new(),
@@ -236,7 +237,6 @@ defmodule Sector.Node do
           "[CS] MissionReject do drone #{rej.drone_id}. Re-enfileirando '#{mission_name}' (clock=#{original_clock}) com prioridade 2."
         )
 
-        # Re-insere com prioridade 2 e clock ORIGINAL
         requeued = {2, mission_name, original_clock, :waiting}
         new_queue = insert_request_in_queue(state.request_queue, requeued)
 
@@ -262,7 +262,12 @@ defmodule Sector.Node do
   def handle_cast({:network_message, %Reply{} = reply}, state) do
     Logger.info("Recebido Reply de #{reply.from}")
     IO.puts("=== [SHELL] [REDE] Recebido Reply de #{reply.from} ===")
-    handle_reply(reply.from, state)
+
+    if state.requesting? and (reply.request_ts == nil or reply.request_ts == state.request_ts) do
+      handle_reply(reply.from, state)
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -314,8 +319,9 @@ defmodule Sector.Node do
   end
 
   @impl true
-  def handle_info(:try_critical_section, state) do
-    {:ok, request, new_clock, new_counter} = create_request(state.clock, state.request_counter)
+  def handle_info({:try_critical_section, priority}, state) do
+    {:ok, request, new_clock, new_counter} =
+      create_request(state.clock, state.request_counter, priority)
 
     new_request_tree =
       insert_request_in_queue(state.request_queue, request)
@@ -346,6 +352,10 @@ defmodule Sector.Node do
   end
 
   @impl true
+  def handle_info(:try_critical_section, state) do
+    handle_info({:try_critical_section, nil}, state)
+  end
+
   def handle_info(:log_critical_section, state) do
     Logger.info(
       "[CS] EM SEÇÃO CRÍTICA. Missão: #{state.request_for_process} | Clock: #{state.clock}"
@@ -374,12 +384,13 @@ defmodule Sector.Node do
 
     Logger.info("Fila de requisições\n#{queue_format}")
 
-    Enum.each(state.deferred_replies, fn {deferred_node, _ts} ->
+    Enum.each(state.deferred_replies, fn {deferred_node, req_ts} ->
       reply_msg = %Reply{
         type: :reply,
         from: state.node_id,
         to: deferred_node,
-        clock: state.clock
+        clock: state.clock,
+        request_ts: req_ts
       }
 
       IO.puts("=== [SHELL] Enviando REPLY (adiado) para #{deferred_node} ===")
@@ -391,6 +402,7 @@ defmodule Sector.Node do
       | in_critical_section?: false,
         requesting?: false,
         request_ts: nil,
+        mission_ts: nil,
         request_priority: 0,
         awaiting_replies: MapSet.new(),
         deferred_replies: MapSet.new(),
@@ -403,7 +415,7 @@ defmodule Sector.Node do
 
   defp maybe_start_request(state) do
     if not state.requesting? and not state.in_critical_section? and state.request_queue != [] do
-      {priority, name, _queue_clock, _doing} = get_next_request(state.request_queue)
+      {priority, name, queue_ts, _status} = get_next_request(state.request_queue)
 
       new_queue = remove_mission_complete_from_priority_queue(state.request_queue, name)
 
@@ -431,6 +443,7 @@ defmodule Sector.Node do
         | clock: network_clock,
           requesting?: true,
           request_ts: network_clock,
+          mission_ts: queue_ts,
           request_priority: priority,
           awaiting_replies: awaiting,
           request_for_process: name,
@@ -472,8 +485,8 @@ defmodule Sector.Node do
     end
   end
 
-  defp create_request(clock, request_counter) do
-    priority = Enum.random([0, 1])
+  defp create_request(clock, request_counter, explicit_priority) do
+    priority = explicit_priority || if(:rand.uniform() > 0.8, do: 1, else: 0)
 
     new_counter = request_counter + 1
     new_clock = clock + 1
@@ -500,78 +513,178 @@ defmodule Sector.Node do
     new_clock = max(state.clock, request_ts) + 1
     state = %{state | clock: new_clock}
 
-    cond do
-      state.in_critical_section? ->
-        Logger.info(
-          "[REQUEST] ADIANDO reply para #{from_id} — estou na seção crítica." <>
-            " Meu clock: #{state.clock} | TS do request: #{request_ts}"
-        )
+    action =
+      cond do
+        state.in_critical_section? and state.waiting_for_drone? and
+            request_priority > state.request_priority ->
+          :abort_cs
 
-        IO.puts("=== [SHELL] [ALGORITMO] ADIANDO reply para #{from_id} (Na Seção Crítica) ===")
+        state.in_critical_section? ->
+          :defer
 
-        {:noreply,
-         %{state | deferred_replies: MapSet.put(state.deferred_replies, {from_id, request_ts})}}
+        not state.requesting? ->
+          :accept
 
-      not state.requesting? ->
-        Logger.info(
-          "[REQUEST] ACEITANDO request de #{from_id} — não estou requisitando." <>
-            " Meu clock: #{state.clock} | TS do request: #{request_ts}"
-        )
+        request_priority > state.request_priority ->
+          :abort_req
 
-        IO.puts(
-          "=== [SHELL] [ALGORITMO] ACEITANDO request de #{from_id} (Não estou requisitando) -> Enviando REPLY ==="
-        )
+        i_have_priotity_over?(
+          state.request_ts,
+          state.request_priority,
+          state.node_id,
+          request_ts,
+          request_priority,
+          from_id
+        ) ->
+          :defer
 
-        reply_msg = %Reply{
-          type: :reply,
-          from: state.node_id,
-          to: from_id,
-          clock: new_clock
-        }
+        true ->
+          :accept
+      end
 
-        Sector.TcpClient.send_to(from_id, reply_msg)
-        {:noreply, state}
+    execute_request_action(action, from_id, request_ts, new_clock, state)
+  end
 
-      i_have_priotity_over?(
-        state.request_ts,
-        state.request_priority,
-        state.node_id,
-        request_ts,
-        request_priority,
-        from_id
-      ) ->
-        Logger.info(
-          "[REQUEST] ADIANDO reply para #{from_id} — tenho prioridade." <>
-            " Meu TS: #{state.request_ts} prioridade #{state.request_priority}" <>
-            " | TS do request: #{request_ts} prioridade #{request_priority}"
-        )
+  defp execute_request_action(:defer, from_id, request_ts, _new_clock, state) do
+    Logger.info(
+      "[REQUEST] ADIANDO reply para #{from_id} — " <>
+        if(state.in_critical_section?, do: "estou na seção crítica.", else: "tenho prioridade.") <>
+        " Meu TS/Clock: #{state.request_ts || state.clock} | TS do request: #{request_ts}"
+    )
 
-        IO.puts("=== [SHELL] [ALGORITMO] ADIANDO reply para #{from_id} (Tenho prioridade) ===")
+    IO.puts(
+      "=== [SHELL] [ALGORITMO] ADIANDO reply para #{from_id} (" <>
+        if(state.in_critical_section?, do: "Na Seção Crítica", else: "Tenho prioridade") <>
+        ") ==="
+    )
 
-        {:noreply,
-         %{state | deferred_replies: MapSet.put(state.deferred_replies, {from_id, request_ts})}}
+    {:noreply,
+     %{state | deferred_replies: MapSet.put(state.deferred_replies, {from_id, request_ts})}}
+  end
 
-      true ->
-        Logger.info(
-          "[REQUEST] ACEITANDO request de #{from_id} — ele tem prioridade." <>
-            " Meu TS: #{state.request_ts} prioridade #{state.request_priority}" <>
-            " | TS do request: #{request_ts} prioridade #{request_priority}"
-        )
+  defp execute_request_action(:accept, from_id, request_ts, new_clock, state) do
+    Logger.info(
+      "[REQUEST] ACEITANDO request de #{from_id} — " <>
+        if(state.requesting?, do: "ele tem prioridade.", else: "não estou requisitando.") <>
+        " Meu TS/Clock: #{state.request_ts || state.clock} | TS do request: #{request_ts}"
+    )
 
-        IO.puts(
-          "=== [SHELL] [ALGORITMO] ACEITANDO request de #{from_id} (Ele tem prioridade) -> Enviando REPLY ==="
-        )
+    IO.puts(
+      "=== [SHELL] [ALGORITMO] ACEITANDO request de #{from_id} (" <>
+        if(state.requesting?, do: "Ele tem prioridade", else: "Não estou requisitando") <>
+        ") -> Enviando REPLY ==="
+    )
 
-        reply_msg = %Reply{
-          type: :reply,
-          from: state.node_id,
-          to: from_id,
-          clock: new_clock
-        }
+    reply_msg = %Reply{
+      type: :reply,
+      from: state.node_id,
+      to: from_id,
+      clock: new_clock,
+      request_ts: request_ts
+    }
 
-        Sector.TcpClient.send_to(from_id, reply_msg)
-        {:noreply, state}
-    end
+    Sector.TcpClient.send_to(from_id, reply_msg)
+    {:noreply, state}
+  end
+
+  defp execute_request_action(:abort_req, from_id, request_ts, new_clock, state) do
+    Logger.info(
+      "[REQUEST] ABORTANDO meu request (TS #{state.request_ts}) para dar vez a #{from_id} — ele tem prioridade maior."
+    )
+
+    IO.puts(
+      "=== [SHELL] [ALGORITMO] ABORTANDO request para dar vez a #{from_id} (Prioridade Maior) -> Enviando REPLY ==="
+    )
+
+    aborted_request =
+      {state.request_priority, state.request_for_process, state.mission_ts, :waiting}
+
+    new_request_tree = insert_request_in_queue(state.request_queue, aborted_request)
+
+    reply_msg = %Reply{
+      type: :reply,
+      from: state.node_id,
+      to: from_id,
+      clock: new_clock,
+      request_ts: request_ts
+    }
+
+    Sector.TcpClient.send_to(from_id, reply_msg)
+
+    state = %{
+      state
+      | request_queue: new_request_tree,
+        requesting?: false,
+        request_for_process: nil,
+        request_ts: nil,
+        mission_ts: nil,
+        request_priority: 0,
+        awaiting_replies: MapSet.new()
+    }
+
+    send(self(), :try_critical_section)
+
+    {:noreply, state}
+  end
+
+  defp execute_request_action(:abort_cs, from_id, request_ts, new_clock, state) do
+    Logger.info(
+      "[REQUEST] ABORTANDO Seção Crítica (sem drone disponível) para dar vez a #{from_id} — prioridade maior."
+    )
+
+    IO.puts(
+      "=== [SHELL] [ALGORITMO] ABORTANDO SEÇÃO CRÍTICA (esperando drone) para dar vez a #{from_id} (Prioridade Maior) -> Enviando REPLY ==="
+    )
+
+    aborted_request =
+      {state.request_priority, state.request_for_process, state.mission_ts, :waiting}
+
+    new_request_tree = insert_request_in_queue(state.request_queue, aborted_request)
+
+    reply_msg = %Reply{
+      type: :reply,
+      from: state.node_id,
+      to: from_id,
+      clock: new_clock,
+      request_ts: request_ts
+    }
+
+    Sector.TcpClient.send_to(from_id, reply_msg)
+
+    Enum.each(state.deferred_replies, fn {deferred_node, req_ts} ->
+      IO.puts("=== [SHELL] Enviando REPLY (adiado pelo abort da SC) para #{deferred_node} ===")
+
+      deferred_reply_msg = %Reply{
+        type: :reply,
+        from: state.node_id,
+        to: deferred_node,
+        clock: new_clock,
+        request_ts: req_ts
+      }
+
+      Sector.TcpClient.send_to(deferred_node, deferred_reply_msg)
+    end)
+
+    if state.cs_heartbeat_timer, do: Process.cancel_timer(state.cs_heartbeat_timer)
+
+    state = %{
+      state
+      | request_queue: new_request_tree,
+        in_critical_section?: false,
+        waiting_for_drone?: false,
+        requesting?: false,
+        request_for_process: nil,
+        request_ts: nil,
+        mission_ts: nil,
+        request_priority: 0,
+        awaiting_replies: MapSet.new(),
+        deferred_replies: MapSet.new(),
+        pending_mission_ack: nil
+    }
+
+    send(self(), :try_critical_section)
+
+    {:noreply, state}
   end
 
   defp i_have_priotity_over?(my_ts, _my_priority, my_id, other_ts, _other_priority, other_id) do
@@ -624,7 +737,6 @@ defmodule Sector.Node do
         waiting_for_drone?: true
     }
 
-    # Tenta alocar um drone assim que entra na seção crítica
     {_noreply, state} = allocate_drone(state)
     state
   end

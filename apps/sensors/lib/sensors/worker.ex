@@ -68,7 +68,8 @@ defmodule Sensors.Worker do
 
   @impl true
   def handle_info(:generate_request, state) do
-    priority = Enum.random([0, 1])
+    # 20% de chance para Prio 1 e 80% para Prio 0
+    priority = if :rand.uniform() > 0.8, do: 1, else: 0
     reason = Sensors.Reasons.get_random()
 
     request_msg = %Core.Protocol.SensorRequest{

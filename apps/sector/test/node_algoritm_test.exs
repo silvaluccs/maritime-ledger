@@ -286,4 +286,118 @@ defmodule Sector.NodeAlgoritmTest do
     assert state.in_critical_section? == true
     assert state.waiting_for_drone? == true
   end
+
+  test "aborta propria requisicao quando recebe request de maior prioridade" do
+    peer_port = 5060
+    node_port = 5061
+
+    {:ok, listen_socket} =
+      :gen_tcp.listen(peer_port, [:binary, packet: :line, active: false, reuseaddr: true])
+
+    System.put_env("HOSTS", "127.0.0.1:#{peer_port}")
+
+    {:ok, _pid} = Sector.Node.start_link(tcp_port: node_port)
+
+    {:ok, peer_server_socket} = :gen_tcp.accept(listen_socket, 2000)
+
+    {:ok, peer_client_socket} =
+      :gen_tcp.connect(~c"127.0.0.1", node_port, [:binary, packet: :line, active: false])
+
+    # Forçamos uma missão de PRIORIDADE 0
+    sensor_req = %Core.Protocol.SensorRequest{
+      type: :sensor_request,
+      sensor_id: "s1",
+      priority: 0,
+      reason: "baixa prioridade"
+    }
+
+    GenServer.cast(Sector.Node, {:network_message, sensor_req})
+
+    # O nó deve ter enviado um request (Prio 0)
+    assert {:ok, data1} = :gen_tcp.recv(peer_server_socket, 0, 5000)
+
+    assert %{"type" => "request", "priority" => 0, "clock" => req_clock} =
+             JSON.decode!(String.trim(data1))
+
+    # O peer envia um request de PRIORIDADE 1
+    peer_request_msg = %{
+      "type" => "request",
+      "from" => "127.0.0.1:#{peer_port}",
+      "to" => "broadcast",
+      "clock" => req_clock + 5,
+      "priority" => 1
+    }
+
+    :ok = :gen_tcp.send(peer_client_socket, JSON.encode!(peer_request_msg) <> "\n")
+
+    # O nó DEVE abortar e enviar um REPLY imediatamente
+    assert {:ok, data2} = :gen_tcp.recv(peer_server_socket, 0, 5000)
+    assert %{"type" => "reply", "request_ts" => peer_ts} = JSON.decode!(String.trim(data2))
+    assert peer_ts == req_clock + 5
+
+    # E logo em seguida, o nó deve reenviar o seu request (a mesma missão de Prio 0, mas novo clock)
+    assert {:ok, data3} = :gen_tcp.recv(peer_server_socket, 0, 5000)
+    assert %{"type" => "request", "priority" => 0} = JSON.decode!(String.trim(data3))
+
+    :gen_tcp.close(peer_client_socket)
+    :gen_tcp.close(peer_server_socket)
+    :gen_tcp.close(listen_socket)
+  end
+
+  test "re-enfileira missao abortada com prioridade e timestamp exatos originais" do
+    peer_port = 6060
+    node_port = 6061
+
+    {:ok, listen_socket} =
+      :gen_tcp.listen(peer_port, [:binary, packet: :line, active: false, reuseaddr: true])
+
+    System.put_env("HOSTS", "127.0.0.1:#{peer_port}")
+
+    {:ok, _pid} = Sector.Node.start_link(tcp_port: node_port)
+    {:ok, peer_server_socket} = :gen_tcp.accept(listen_socket, 2000)
+
+    {:ok, peer_client_socket} =
+      :gen_tcp.connect(~c"127.0.0.1", node_port, [:binary, packet: :line, active: false])
+
+    # Dispara uma missao local com prioridade 0
+    send(Sector.Node, {:try_critical_section, 0})
+
+    # O no vai mandar seu request e o TS original estara no seu state e no payload
+    assert {:ok, req_data} = :gen_tcp.recv(peer_server_socket, 0, 5000)
+    %{"type" => "request", "clock" => net_ts_before_abort} = JSON.decode!(String.trim(req_data))
+
+    state_before_abort = :sys.get_state(Sector.Node)
+    assert state_before_abort.request_priority == 0
+    # Guardamos o mission_ts exato para comprovar que ele sobrevive a preempcao
+    original_mission_ts = state_before_abort.mission_ts
+    assert original_mission_ts != nil
+
+    # Agora criamos a preempcao enviando um Request com Prioridade MAIOR
+    peer_request_msg = %{
+      "type" => "request",
+      "from" => "127.0.0.1:#{peer_port}",
+      "to" => "broadcast",
+      "clock" => net_ts_before_abort + 1,
+      "priority" => 1
+    }
+
+    :ok = :gen_tcp.send(peer_client_socket, JSON.encode!(peer_request_msg) <> "\n")
+
+    # Esperamos receber o Reply e um NOVO request do Sector.Node
+    assert {:ok, _reply_data} = :gen_tcp.recv(peer_server_socket, 0, 5000)
+    assert {:ok, new_req_data} = :gen_tcp.recv(peer_server_socket, 0, 5000)
+    assert %{"type" => "request", "priority" => 0} = JSON.decode!(String.trim(new_req_data))
+
+    state_after_abort = :sys.get_state(Sector.Node)
+
+    # A missao deve ter reentrado, mas como ele logo pede CS de novo,
+    # ela pode ja estar em state.mission_ts de novo (ou na queue).
+    # Como ele so tem 1 missao, ela que estara ativa novamente.
+    assert state_after_abort.request_priority == 0
+    assert state_after_abort.mission_ts == original_mission_ts
+
+    :gen_tcp.close(peer_client_socket)
+    :gen_tcp.close(peer_server_socket)
+    :gen_tcp.close(listen_socket)
+  end
 end

@@ -487,7 +487,13 @@ defmodule Sector.Node do
 
   defp insert_request_in_queue(queue, request) do
     (queue ++ [request])
-    |> Enum.sort_by(fn {priority, _name, timestamp, _status} -> {priority, timestamp} end, :desc)
+    |> Enum.sort(fn {prio1, _name1, ts1, _status1}, {prio2, _name2, ts2, _status2} ->
+      if prio1 == prio2 do
+        ts1 < ts2
+      else
+        prio1 > prio2
+      end
+    end)
   end
 
   defp handle_request(from_id, request_ts, request_priority, state) do

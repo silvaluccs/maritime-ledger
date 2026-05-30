@@ -2,9 +2,9 @@ name: Elixir CI
 
 on:
   push:
-    branches: ["main", "develop", "feat/create-structs-for-blockchain"]
+    branches: ["main", "feat/create-initial-model-for-blockchain"]
   pull_request:
-    branches: ["main", "develop", "feat/create-structs-for-blockchain"]
+    branches: ["main",  "feat/create-initial-model-for-blockchain"]
 
 # 2. JOBS: Qual máquina vamos usar?
 jobs:

@@ -3,7 +3,6 @@ defmodule Blockchain.ChainTest do
   require Logger
 
   setup do
-    # Para o GenServer se estiver rodando
     case Process.whereis(Blockchain.Chain) do
       nil -> :ok
       pid -> GenServer.stop(pid)
@@ -11,7 +10,6 @@ defmodule Blockchain.ChainTest do
 
     File.rm("chain.json")
 
-    # Inicia instância limpa — ignora se já estiver rodando
     case Blockchain.Chain.start_link() do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok

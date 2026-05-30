@@ -27,8 +27,7 @@ defmodule Blockchain.MixProject do
   defp deps do
     [
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:uuid_v7, "~> 0.6.0"},
-      {:core, in_umbrella: true}
+      {:uuid_v7, "~> 0.6.0"}
     ]
   end
 end

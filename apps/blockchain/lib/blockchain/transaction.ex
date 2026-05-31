@@ -6,7 +6,7 @@ defmodule Blockchain.Transaction do
   @derive JSON.Encoder
   defstruct [
     :id,
-    :company_id,
+    :owner_id,
     :amount,
     :type,
     :mission_reason,

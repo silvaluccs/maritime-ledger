@@ -8,8 +8,7 @@ defmodule Blockchain.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Starts a worker by calling: Blockchain.Worker.start_link(arg)
-      # {Blockchain.Worker, arg}
+      Blockchain.Chain
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

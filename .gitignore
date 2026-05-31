@@ -21,3 +21,6 @@ erl_crash.dump
 # Also ignore archive artifacts (built via "mix archive.build").
 *.ez
 #step-by-step.md
+apps/blockchain/chain.json
+chain.json
+step-by-step.md

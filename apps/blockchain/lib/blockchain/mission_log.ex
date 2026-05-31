@@ -8,7 +8,6 @@ defmodule Blockchain.MissionLog do
     :id,
     :drone_id,
     :sector_id,
-    :company_id,
     :reason,
     :result,
     :timestamp,

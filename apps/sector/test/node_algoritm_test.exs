@@ -2,15 +2,37 @@ defmodule Sector.NodeAlgoritmTest do
   use ExUnit.Case, async: false
 
   @passkey "08416EB34E46FD01C0E03B5E9B4AEACC06306F16D3E380559BBBAD8323C82A13"
-
   setup do
-    Enum.each([Sector.Node, Sector.TcpServer, Sector.TcpClient], fn mod ->
-      if pid = Process.whereis(mod) do
+    case Process.whereis(Blockchain.Chain) do
+      nil ->
+        :ok
+
+      pid ->
         try do
           GenServer.stop(pid)
         catch
           :exit, _ -> :ok
         end
+    end
+
+    File.rm("/tmp/maritime_chain_test.json")
+
+    case Blockchain.Chain.start_link() do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
+    Enum.each([Sector.Node, Sector.TcpServer, Sector.TcpClient], fn mod ->
+      case Process.whereis(mod) do
+        nil ->
+          :ok
+
+        pid ->
+          try do
+            GenServer.stop(pid)
+          catch
+            :exit, _ -> :ok
+          end
       end
     end)
 

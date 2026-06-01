@@ -24,3 +24,5 @@ erl_crash.dump
 apps/blockchain/chain.json
 chain.json
 step-by-step.md
+apps/sector/chain_test.json
+chain_test.json

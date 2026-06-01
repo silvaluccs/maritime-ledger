@@ -9,7 +9,7 @@ defmodule Blockchain.Chain do
   require Logger
 
   defp chain_file do
-    System.get_env("CHAIN_FILE", "/app/chain.json")
+    Application.get_env(:blockchain, :chain_file, "chain.json")
   end
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)

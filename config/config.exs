@@ -8,5 +8,7 @@
 # configurations or dependencies per app, it is best to
 # move said applications out of the umbrella.
 import Config
-
 config :logger, level: :warning
+config :blockchain, :chain_file, System.get_env("CHAIN_FILE", "/app/chain.json")
+
+import_config "#{config_env()}.exs"

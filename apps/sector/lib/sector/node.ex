@@ -194,8 +194,6 @@ defmodule Sector.Node do
           Logger.info("[BLOCKCHAIN] Missão '#{mission_name}' concluída. Registrando laudo.")
           IO.puts("=== [SHELL] [BLOCKCHAIN]  Laudo registrado para '#{mission_name}' ===")
 
-          
-
           Blockchain.Miner.propose_mission_log(
             status.drone_id,
             state.node_id,
@@ -773,11 +771,10 @@ defmodule Sector.Node do
 
         Logger.info("[CS] Alocando drone #{drone_id} para a missão #{state.request_for_process}.")
 
-
-          Blockchain.Miner.propose_debit(
-            state.node_id,
-state.request_for_process
-          )
+        Blockchain.Miner.propose_debit(
+          state.node_id,
+          state.request_for_process
+        )
 
         mission_msg = %Core.Protocol.Mission{
           type: :mission,

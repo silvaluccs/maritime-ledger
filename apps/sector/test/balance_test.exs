@@ -72,4 +72,3 @@ defmodule Sector.BalanceTest do
     assert result == true
   end
 end
-

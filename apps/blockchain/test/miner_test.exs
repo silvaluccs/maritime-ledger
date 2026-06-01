@@ -4,14 +4,21 @@ defmodule Blockchain.MinerTest do
   alias Blockchain.{Chain, Ledger, Miner}
 
   setup do
-    case Process.whereis(Chain) do
-      nil -> :ok
-      pid -> GenServer.stop(pid)
+    case Process.whereis(Blockchain.Chain) do
+      nil ->
+        :ok
+
+      pid ->
+        try do
+          GenServer.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
     end
 
-    File.rm("chain.json")
+    File.rm("/tmp/maritime_chain_test.json")
 
-    case Chain.start_link() do
+    case Blockchain.Chain.start_link() do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
     end

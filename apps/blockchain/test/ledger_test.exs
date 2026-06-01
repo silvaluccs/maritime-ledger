@@ -3,11 +3,18 @@ defmodule Blockchain.LedgerTest do
 
   setup do
     case Process.whereis(Blockchain.Chain) do
-      nil -> :ok
-      pid -> GenServer.stop(pid)
+      nil ->
+        :ok
+
+      pid ->
+        try do
+          GenServer.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
     end
 
-    File.rm("chain.json")
+    File.rm("/tmp/maritime_chain_test.json")
 
     case Blockchain.Chain.start_link() do
       {:ok, _} -> :ok

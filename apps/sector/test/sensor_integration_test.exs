@@ -4,6 +4,18 @@ defmodule Sector.SensorIntegrationTest do
   @passkey "08416EB34E46FD01C0E03B5E9B4AEACC06306F16D3E380559BBBAD8323C82A13"
 
   setup do
+    case Process.whereis(Blockchain.Chain) do
+      nil -> :ok
+      pid -> GenServer.stop(pid)
+    end
+
+    File.rm("/tmp/maritime_chain_test.json")
+
+    case Blockchain.Chain.start_link() do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
     Enum.each([Sector.Node, Sector.TcpServer, Sector.TcpClient], fn mod ->
       if pid = Process.whereis(mod) do
         try do

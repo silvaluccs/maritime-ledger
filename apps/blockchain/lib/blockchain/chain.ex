@@ -8,7 +8,9 @@ defmodule Blockchain.Chain do
   use GenServer
   require Logger
 
-  @chain_file "chain.json"
+  defp chain_file do
+    Application.get_env(:blockchain, :chain_file, "chain.json")
+  end
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   def get_all_blocks, do: GenServer.call(__MODULE__, :get_all)
@@ -67,15 +69,18 @@ defmodule Blockchain.Chain do
       |> Enum.reverse()
       |> JSON.encode!()
 
-    File.write!(@chain_file, json)
-    Logger.debug("[CHAIN] Chain salva em #{@chain_file}")
+    file = chain_file()
+    File.write!(file, json)
+    Logger.debug("[CHAIN] Chain salva em #{file}")
   end
 
   defp load_chain_from_disk do
-    if File.exists?(@chain_file) do
+    file = chain_file()
+
+    if File.exists?(file) do
       Logger.info("[CHAIN] Arquivo encontrado — carregando do disco...")
 
-      @chain_file
+      file
       |> File.read!()
       |> JSON.decode!()
       |> Enum.map(&decode_block/1)
@@ -149,10 +154,14 @@ defmodule Blockchain.Chain do
   end
 
   defp default_sectors do
-    [
-      {"sector_1", 100},
-      {"sector_2", 100},
-      {"sector_3", 100}
-    ]
+    case System.get_env("BLOCKCHAIN_SECTORS") do
+      nil ->
+        [{"sector_1", 100}, {"sector_2", 100}, {"sector_3", 100}]
+
+      raw ->
+        raw
+        |> String.split(",")
+        |> Enum.map(&{&1, 100})
+    end
   end
 end

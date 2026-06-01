@@ -15,6 +15,7 @@ COPY mix.exs mix.lock ./
 COPY apps/core/mix.exs apps/core/
 COPY apps/sector/mix.exs apps/sector/
 COPY apps/drone/mix.exs apps/drone/
+COPY apps/blockchain/mix.exs apps/blockchain/
 
 # Install dependencies
 RUN mix do deps.get, deps.compile

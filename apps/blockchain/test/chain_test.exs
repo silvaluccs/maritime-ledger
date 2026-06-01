@@ -4,15 +4,22 @@ defmodule Blockchain.ChainTest do
 
   setup do
     case Process.whereis(Blockchain.Chain) do
-      nil -> :ok
-      pid -> GenServer.stop(pid)
+      nil ->
+        :ok
+
+      pid ->
+        try do
+          GenServer.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
     end
 
-    File.rm("chain.json")
+    File.rm("/tmp/maritime_chain_test.json")
 
     case Blockchain.Chain.start_link() do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
     end
 
     :ok
@@ -174,15 +181,17 @@ defmodule Blockchain.ChainTest do
 
   describe "persistência em disco" do
     test "arquivo chain.json é criado ao iniciar" do
-      assert File.exists?("chain.json")
+      chain_file = Application.get_env(:blockchain, :chain_file, "chain.json")
+      assert File.exists?(chain_file)
     end
 
     test "arquivo chain.json é atualizado ao adicionar bloco" do
+      chain_file = Application.get_env(:blockchain, :chain_file, "chain.json")
       last = Blockchain.Chain.get_last_block()
       block = build_block(last, [build_transaction("sector_1", :debit, 10)])
       Blockchain.Chain.add_block(block)
 
-      json = File.read!("chain.json")
+      json = File.read!(chain_file)
       assert String.contains?(json, "sector_1")
     end
 

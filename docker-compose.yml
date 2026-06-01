@@ -10,6 +10,7 @@ services:
       - NODE_NAME=sector1
       - TCP_PORT=5050
       - HOSTS=sector2:5050,sector3:5050
+      - BLOCKCHAIN_SECTORS=sector1:5050,sector2:5050,sector3:5050  
       - PASSKEY=${PASSKEY}
     command:
       [
@@ -30,6 +31,7 @@ services:
     environment:
       - NODE_NAME=sector2
       - TCP_PORT=5050
+      - BLOCKCHAIN_SECTORS=sector1:5050,sector2:5050,sector3:5050 
       - HOSTS=sector1:5050,sector3:5050
       - PASSKEY=${PASSKEY}
     command:
@@ -54,6 +56,7 @@ services:
       - NODE_NAME=sector3
       - TCP_PORT=5050
       - HOSTS=sector1:5050,sector2:5050
+      - BLOCKCHAIN_SECTORS=sector1:5050,sector2:5050,sector3:5050 
       - PASSKEY=${PASSKEY}
     command:
       [

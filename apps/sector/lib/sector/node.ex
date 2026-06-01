@@ -185,6 +185,24 @@ defmodule Sector.Node do
         }
       end
 
+    if status.status == "IDLE" do
+      case Map.get(state.drones_doing_mission, status.drone_id) do
+        nil ->
+          :ok
+
+        mission_name ->
+          Logger.info("[BLOCKCHAIN] Missão '#{mission_name}' concluída. Registrando laudo.")
+          IO.puts("=== [SHELL] [BLOCKCHAIN]  Laudo registrado para '#{mission_name}' ===")
+
+          Blockchain.Miner.propose_mission_log(
+            status.drone_id,
+            state.node_id,
+            mission_name,
+            :completed
+          )
+      end
+    end
+
     new_state = %{state | available_drones: new_available, drones_doing_mission: new_doing}
 
     if new_state.in_critical_section? and new_state.waiting_for_drone? and status.status == "IDLE" do
@@ -290,60 +308,65 @@ defmodule Sector.Node do
       "Recebido Request do Sensor #{req.sensor_id}: #{req.reason} (Prioridade: #{req.priority})"
     )
 
-    new_clock = state.clock + 1
-    new_counter = state.request_counter + 1
+    if Blockchain.Ledger.has_balance?(state.node_id, 10) do
+      new_clock = state.clock + 1
+      new_counter = state.request_counter + 1
 
-    request_name = "SENSOR #{new_counter} | MOTIVO: #{req.reason} | CLOCK #{new_clock}"
+      request_name = "SENSOR #{new_counter} | MOTIVO: #{req.reason} | CLOCK #{new_clock}"
+      request = {req.priority, request_name, new_clock, :waiting}
+      new_request_tree = insert_request_in_queue(state.request_queue, request)
 
-    request = {req.priority, request_name, new_clock, :waiting}
+      queue_format =
+        Enum.map_join(new_request_tree, "\n", fn {p, name, ts, _status} ->
+          "#{name} PRIORIDADE #{p} TS #{ts}"
+        end)
 
-    new_request_tree = insert_request_in_queue(state.request_queue, request)
+      IO.puts("\n=== [SHELL] Missão de Sensor enfileirada. FILA=\n#{queue_format} ===")
 
-    queue_format =
-      Enum.map_join(new_request_tree, "\n", fn {p, name, ts, _status} ->
-        "#{name} PRIORIDADE #{p} TS #{ts}"
-      end)
+      new_state = %{
+        state
+        | request_queue: new_request_tree,
+          request_counter: new_counter,
+          clock: new_clock
+      }
 
-    IO.puts("\n=== [SHELL] Missão de Sensor enfileirada. FILA=\n#{queue_format} ===")
-
-    new_state = %{
-      state
-      | request_queue: new_request_tree,
-        request_counter: new_counter,
-        clock: new_clock
-    }
-
-    new_state = maybe_start_request(new_state)
-
-    {:noreply, new_state}
+      {:noreply, maybe_start_request(new_state)}
+    else
+      Logger.warning("[BLOCKCHAIN] #{state.node_id} sem créditos. Requisição rejeitada.")
+      IO.puts("=== [SHELL] ❌ Sem créditos para requisitar drone! Saldo insuficiente. ===")
+      {:noreply, state}
+    end
   end
 
   @impl true
   def handle_info({:try_critical_section, priority}, state) do
-    {:ok, request, new_clock, new_counter} =
-      create_request(state.clock, state.request_counter, priority)
+    if Blockchain.Ledger.has_balance?(state.node_id, 10) do
+      {:ok, request, new_clock, new_counter} =
+        create_request(state.clock, state.request_counter, priority)
 
-    new_request_tree =
-      insert_request_in_queue(state.request_queue, request)
+      new_request_tree = insert_request_in_queue(state.request_queue, request)
 
-    queue_format =
-      Enum.map_join(new_request_tree, "\n", fn {p, name, ts, _status} ->
-        "#{name} PRIORIDADE #{p} TS #{ts}"
-      end)
+      queue_format =
+        Enum.map_join(new_request_tree, "\n", fn {p, name, ts, _status} ->
+          "#{name} PRIORIDADE #{p} TS #{ts}"
+        end)
 
-    IO.puts("\n=== [SHELL] Nova missão enfileirada. FILA=\n#{queue_format} ===")
-    Logger.info("Nova missão enfileirada. FILA=\n#{queue_format}")
+      IO.puts("\n=== [SHELL] Nova missão enfileirada. FILA=\n#{queue_format} ===")
+      Logger.info("Nova missão enfileirada. FILA=\n#{queue_format}")
 
-    new_state = %{
-      state
-      | request_queue: new_request_tree,
-        request_counter: new_counter,
-        clock: new_clock
-    }
+      new_state = %{
+        state
+        | request_queue: new_request_tree,
+          request_counter: new_counter,
+          clock: new_clock
+      }
 
-    new_state = maybe_start_request(new_state)
-
-    {:noreply, new_state}
+      {:noreply, maybe_start_request(new_state)}
+    else
+      Logger.warning("[BLOCKCHAIN] #{state.node_id} sem créditos. Requisição manual rejeitada.")
+      IO.puts("=== [SHELL] ❌ Sem créditos para requisitar drone! Saldo insuficiente. ===")
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -622,9 +645,7 @@ defmodule Sector.Node do
         awaiting_replies: MapSet.new()
     }
 
-    send(self(), :try_critical_section)
-
-    {:noreply, state}
+    {:noreply, maybe_start_request(state)}
   end
 
   defp execute_request_action(:abort_cs, from_id, request_ts, new_clock, state) do
@@ -682,9 +703,7 @@ defmodule Sector.Node do
         pending_mission_ack: nil
     }
 
-    send(self(), :try_critical_section)
-
-    {:noreply, state}
+    {:noreply, maybe_start_request(state)}
   end
 
   defp i_have_priotity_over?(my_ts, _my_priority, my_id, other_ts, _other_priority, other_id) do
@@ -751,6 +770,11 @@ defmodule Sector.Node do
         )
 
         Logger.info("[CS] Alocando drone #{drone_id} para a missão #{state.request_for_process}.")
+
+        Blockchain.Miner.propose_debit(
+          state.node_id,
+          state.request_for_process
+        )
 
         mission_msg = %Core.Protocol.Mission{
           type: :mission,

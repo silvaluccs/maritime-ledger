@@ -36,6 +36,9 @@ defmodule Sector.NodeAlgoritmTest do
       end
     end)
 
+    # ← aguarda portas serem liberadas pelo SO
+    Process.sleep(100)
+
     System.delete_env("HOSTS")
     :ok
   end
@@ -129,11 +132,10 @@ defmodule Sector.NodeAlgoritmTest do
         }) <> "\n"
       )
 
-    # Após o MissionAck, Node sai da SC e libera o Reply adiado para o peer
-    assert {:ok, reply_data} = :gen_tcp.recv(peer_server_socket, 0, 15_000)
-    assert %{"type" => "reply", "from" => ^node_id} = JSON.decode!(String.trim(reply_data))
-
+    reply_data = receive_until_reply(peer_server_socket, node_id, 15_000)
+    assert reply_data != nil
     if drone_socket, do: :gen_tcp.close(drone_socket)
+
     :gen_tcp.close(peer_client_socket)
     :gen_tcp.close(peer_server_socket)
     :gen_tcp.close(listen_socket)
@@ -356,5 +358,24 @@ defmodule Sector.NodeAlgoritmTest do
     :gen_tcp.close(peer_client_socket)
     :gen_tcp.close(peer_server_socket)
     :gen_tcp.close(listen_socket)
+  end
+
+  defp receive_until_reply(socket, expected_from, timeout) do
+    case :gen_tcp.recv(socket, 0, timeout) do
+      {:ok, data} ->
+        msg = JSON.decode!(String.trim(data))
+
+        case msg do
+          %{"type" => "reply", "from" => ^expected_from} ->
+            msg
+
+          _ ->
+            # mensagem ignorada (ex: block_proposal), continua esperando
+            receive_until_reply(socket, expected_from, timeout)
+        end
+
+      {:error, _} ->
+        nil
+    end
   end
 end

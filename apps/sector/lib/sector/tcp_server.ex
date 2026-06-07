@@ -7,6 +7,7 @@ defmodule Sector.TcpServer do
   require Logger
 
   alias Core.Protocol.{
+    BlockProposal,
     DroneStatus,
     Message,
     MissionAck,
@@ -184,6 +185,17 @@ defmodule Sector.TcpServer do
   defp reject_connection(socket, state) do
     :gen_tcp.close(socket)
     {:noreply, %{state | pending_auth: Map.delete(state.pending_auth, socket)}}
+  end
+
+  defp dispatch_message(%{"type" => "block_proposal"} = map, _socket) do
+    case BlockProposal.from_map(map) do
+      {:ok, proposal} ->
+        Logger.info("[BLOCKCHAIN] Recebido block_proposal do peer #{proposal.from}")
+        Blockchain.Consensus.receive_proposal(proposal.block)
+
+      {:error, reason} ->
+        Logger.error("BlockProposal inválido: #{inspect(reason)}")
+    end
   end
 
   defp dispatch_message(%{"type" => "request"} = map, _socket) do

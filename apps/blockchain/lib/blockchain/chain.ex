@@ -17,6 +17,7 @@ defmodule Blockchain.Chain do
   def get_last_block, do: GenServer.call(__MODULE__, :get_last)
   def add_block(block), do: GenServer.call(__MODULE__, {:add_block, block})
   def valid_chain?, do: GenServer.call(__MODULE__, :valid_chain)
+  def decode_block_from_map(map), do: decode_block(map)
 
   @impl true
   def init(_opts) do

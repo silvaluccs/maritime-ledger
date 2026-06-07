@@ -246,4 +246,25 @@ defmodule Core.Protocol do
 
     def from_map(_), do: {:error, :invalid_message}
   end
+
+  defmodule BlockProposal do
+    @moduledoc """
+    Mensagem enviada por um setor para propagar um novo bloco da blockchain
+    para todos os peers conectados. O bloco é carregado como mapa genérico
+    para evitar dependência circular entre core e blockchain.
+    """
+    @derive JSON.Encoder
+    defstruct [:type, :block, :from]
+
+    def from_map(%{"type" => "block_proposal", "block" => block_map, "from" => from}) do
+      {:ok,
+       %__MODULE__{
+         type: :block_proposal,
+         block: block_map,
+         from: from
+       }}
+    end
+
+    def from_map(_), do: {:error, :invalid_message}
+  end
 end

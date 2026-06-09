@@ -8,6 +8,8 @@ defmodule Sector.TcpServer do
 
   alias Core.Protocol.{
     BlockProposal,
+    ChainSyncRequest,
+    ChainSyncResponse,
     DroneStatus,
     Message,
     MissionAck,
@@ -185,6 +187,53 @@ defmodule Sector.TcpServer do
   defp reject_connection(socket, state) do
     :gen_tcp.close(socket)
     {:noreply, %{state | pending_auth: Map.delete(state.pending_auth, socket)}}
+  end
+
+  defp dispatch_message(%{"type" => "chain_sync_request"} = map, socket) do
+    case ChainSyncRequest.from_map(map) do
+      {:ok, req} ->
+        Logger.info(
+          "[CHAIN SYNC] Recebido pedido de sync de #{req.from} (último bloco deles: #{req.last_index})"
+        )
+
+        local_last = Blockchain.Chain.get_last_block()
+
+        if local_last.index > req.last_index do
+          Logger.info(
+            "[CHAIN SYNC] Temos #{local_last.index - req.last_index} bloco(s) a mais — enviando chain"
+          )
+
+          chain = Blockchain.Chain.get_all_blocks()
+          chain_as_maps = JSON.decode!(JSON.encode!(chain))
+
+          response = %{
+            "type" => "chain_sync_response",
+            "from" => Sector.NodeId.get(),
+            "chain" => chain_as_maps
+          }
+
+          :gen_tcp.send(socket, JSON.encode!(response) <> "\n")
+        else
+          Logger.info("[CHAIN SYNC] Peer #{req.from} está atualizado — nenhum envio necessário")
+        end
+
+      {:error, reason} ->
+        Logger.error("ChainSyncRequest inválido: #{inspect(reason)}")
+    end
+  end
+
+  defp dispatch_message(%{"type" => "chain_sync_response"} = map, _socket) do
+    case ChainSyncResponse.from_map(map) do
+      {:ok, resp} ->
+        Logger.info(
+          "[CHAIN SYNC] Recebida chain de #{resp.from} com #{length(resp.chain)} bloco(s)"
+        )
+
+        Blockchain.Chain.maybe_replace_chain(resp.chain)
+
+      {:error, reason} ->
+        Logger.error("ChainSyncResponse inválido: #{inspect(reason)}")
+    end
   end
 
   defp dispatch_message(%{"type" => "block_proposal"} = map, _socket) do

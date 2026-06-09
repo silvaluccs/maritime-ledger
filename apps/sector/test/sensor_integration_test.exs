@@ -59,10 +59,9 @@ defmodule Sector.SensorIntegrationTest do
     {:ok, peer_server_socket} = :gen_tcp.accept(listen_socket, 2000)
 
     # Consome o auth que o TcpClient envia automaticamente ao conectar
-    assert {:ok, auth_data} = :gen_tcp.recv(peer_server_socket, 0, 2000)
-    assert String.contains?(auth_data, "auth")
-
+    auth_msg = recv_until_type(peer_server_socket, "auth", 2000)
     # Conecta o "Peer" de volta ao TcpServer do Node e autentica
+    assert auth_msg != nil
     peer_client_socket = connect_and_auth(node_port, "127.0.0.1:#{peer_port}")
 
     # Conecta o Sensor mockado e autentica
@@ -102,12 +101,12 @@ defmodule Sector.SensorIntegrationTest do
     :ok = :gen_tcp.send(sensor_socket, JSON.encode!(sensor_req) <> "\n")
 
     # 4. Setor enfileira a req do sensor e manda um Request para o Peer
-    assert {:ok, req_data} = :gen_tcp.recv(peer_server_socket, 0, 5000)
-    req_msg = JSON.decode!(String.trim(req_data))
+    req_msg = recv_until_type(peer_server_socket, "request")
+    assert req_msg != nil
     assert req_msg["type"] == "request"
+    # 5. Peer manda o Reply autorizando o Setor
     assert req_msg["priority"] == 1
 
-    # 5. Peer manda o Reply autorizando o Setor
     reply_msg = %{
       "type" => "reply",
       "from" => "127.0.0.1:#{peer_port}",
@@ -148,5 +147,21 @@ defmodule Sector.SensorIntegrationTest do
     :gen_tcp.close(peer_client_socket)
     :gen_tcp.close(peer_server_socket)
     :gen_tcp.close(listen_socket)
+  end
+
+  defp recv_until_type(socket, type, timeout \\ 5000) do
+    case :gen_tcp.recv(socket, 0, timeout) do
+      {:ok, data} ->
+        msg = JSON.decode!(String.trim(data))
+
+        if msg["type"] == type do
+          msg
+        else
+          recv_until_type(socket, type, timeout)
+        end
+
+      {:error, _} ->
+        nil
+    end
   end
 end

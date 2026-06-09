@@ -5,6 +5,7 @@ WORKDIR /app
 
 # Install build dependencies
 #RUN apk add --no-cache build-base git
+RUN apk add nano
 
 # Install Hex + Rebar
 RUN mix local.hex --force && \

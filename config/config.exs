@@ -10,5 +10,6 @@
 import Config
 config :logger, level: :warning
 config :blockchain, :chain_file, System.get_env("CHAIN_FILE", "/app/chain.json")
+config :blockchain, :network_adapter, Sector.TcpClient
 
 import_config "#{config_env()}.exs"

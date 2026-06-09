@@ -103,9 +103,21 @@ defmodule Sector.TcpClient do
   end
 
   @impl true
-  def handle_info({:tcp, socket, _data}, state) do
-    # O cliente TCP dos setores não precisa processar mensagens recebidas,
-    # as mensagens entre setores são tratadas pelo TcpServer.
+  def handle_info({:tcp, socket, data}, state) do
+    trimmed = String.trim(data)
+
+    case JSON.decode(trimmed) do
+      {:ok, %{"type" => "chain_sync_response"} = msg} ->
+        Logger.info("[CHAIN SYNC] Resposta de sync recebida via TcpClient")
+        Blockchain.Chain.maybe_replace_chain(msg["chain"])
+
+      {:ok, _other} ->
+        :ok
+
+      {:error, _} ->
+        Logger.warning("[TCP CLIENT] Mensagem inválida recebida")
+    end
+
     :inet.setopts(socket, active: :once)
     {:noreply, state}
   end

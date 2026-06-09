@@ -35,7 +35,7 @@ defmodule Blockchain.Consensus do
         :ok
 
       _pid ->
-        peers = Sector.TcpClient.connected_hosts()
+        peers = network_adapter().connected_hosts()
 
         if Enum.empty?(peers) do
           Logger.debug("[CONSENSUS] Sem peers para propagar bloco #{block.index}")
@@ -48,7 +48,7 @@ defmodule Blockchain.Consensus do
             "block" => JSON.decode!(JSON.encode!(block))
           }
 
-          Sector.TcpClient.broadcast(msg)
+          network_adapter().broadcast(msg)
         end
     end
   end
@@ -56,6 +56,10 @@ defmodule Blockchain.Consensus do
   defp validate(block, last_block) do
     block.previous_hash == last_block.hash &&
       block.hash == Block.calculate_hash(block)
+  end
+
+  defp network_adapter do
+    Application.get_env(:blockchain, :network_adapter)
   end
 
   defp commit(block) do

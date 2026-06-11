@@ -128,7 +128,7 @@ defmodule Sector.Node do
     sync_msg = %{
       "type" => "chain_sync_request",
       "from" => state.node_id,
-      "last_index" => last_block.index
+      "last_index" => 0
     }
 
     Sector.TcpClient.send_to(address, sync_msg)

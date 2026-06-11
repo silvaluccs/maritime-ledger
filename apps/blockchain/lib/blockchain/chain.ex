@@ -78,36 +78,66 @@ defmodule Blockchain.Chain do
   def handle_call({:maybe_replace_chain, chain_as_maps}, _from, chain) do
     incoming = Enum.map(chain_as_maps, &decode_block/1) |> Enum.reverse()
 
-    incoming_valid? =
-      incoming
-      |> Enum.reverse()
-      |> Enum.chunk_every(2, 1, :discard)
-      |> Enum.all?(fn [prev, curr] -> Blockchain.Block.validate_block(curr, prev) end)
-
-    local_length = length(chain)
-    incoming_length = length(incoming)
-
     cond do
-      not incoming_valid? ->
+      not valid_incoming?(incoming) ->
         Logger.warning("[CHAIN SYNC] Chain recebida é inválida — ignorando")
         {:reply, :rejected, chain}
 
-      incoming_length <= local_length ->
+      local_corrupted?(chain) ->
+        Logger.error(
+          "[CHAIN SYNC]  DETECTADA CORRUPÇÃO/FRAUDE NA CHAIN LOCAL! Substituindo pelos dados íntegros da rede."
+        )
+
+        IO.puts(
+          "=== [SHELL] [CHAIN SYNC] Dados locais corrompidos/editados! Restaurando integridade via rede... ==="
+        )
+
+        save_chain_to_disk(incoming)
+        {:reply, :replaced, incoming}
+
+      length(incoming) <= length(chain) ->
         Logger.info(
-          "[CHAIN SYNC] Chain recebida não é maior — ignorando (local: #{local_length}, recebida: #{incoming_length})"
+          "[CHAIN SYNC] Chain recebida não é maior — ignorando (local: #{length(chain)}, recebida: #{length(incoming)})"
         )
 
         {:reply, :ignored, chain}
 
       true ->
         Logger.info(
-          "[CHAIN SYNC] Substituindo chain local (#{local_length} → #{incoming_length} blocos)"
+          "[CHAIN SYNC] Substituindo chain local por uma cadeia mais longa (#{length(chain)} → #{length(incoming)} blocos)"
         )
 
-        IO.puts("=== [SHELL] [CHAIN SYNC] ✅ Chain atualizada com #{incoming_length} blocos ===")
+        IO.puts("=== [SHELL] [CHAIN SYNC] Chain atualizada com #{length(incoming)} blocos ===")
         save_chain_to_disk(incoming)
         {:reply, :replaced, incoming}
     end
+  end
+
+  defp valid_incoming?(incoming) do
+    incoming
+    |> Enum.reverse()
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.all?(fn [prev, curr] ->
+      Blockchain.Block.validate_block(curr, prev) and
+        curr.hash == Blockchain.Block.calculate_hash(curr)
+    end)
+  end
+
+  defp local_corrupted?(chain) do
+    not valid_local?(chain)
+  end
+
+  defp valid_local?(chain) do
+    chain
+    |> Enum.reverse()
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.all?(&valid_pair?/1)
+  end
+
+  defp valid_pair?([prev, curr]) do
+    curr.hash == Blockchain.Block.calculate_hash(curr) and
+      curr.previous_hash == prev.hash and
+      prev.hash == Blockchain.Block.calculate_hash(prev)
   end
 
   defp save_chain_to_disk(chain) do
@@ -124,18 +154,31 @@ defmodule Blockchain.Chain do
   defp load_chain_from_disk do
     file = chain_file()
 
-    if File.exists?(file) do
+    if File.exists?(file) and File.stat!(file).size > 0 do
       Logger.info("[CHAIN] Arquivo encontrado — carregando do disco...")
 
-      file
-      |> File.read!()
-      |> JSON.decode!()
-      |> Enum.map(&decode_block/1)
-      |> Enum.reverse()
+      case File.read!(file) |> JSON.decode!() do
+        [] ->
+          Logger.info("[CHAIN] Arquivo com lista vazia [] — criando bloco gênese...")
+
+          genesis = create_genesis_block()
+
+          save_chain_to_disk([genesis])
+
+          [genesis]
+
+        decoded_list ->
+          decoded_list
+          |> Enum.map(&decode_block/1)
+          |> Enum.reverse()
+      end
     else
-      Logger.info("[CHAIN] Nenhum arquivo encontrado — criando bloco gênese...")
+      Logger.info("[CHAIN] Nenhum arquivo ou arquivo vazio — criando bloco gênese...")
+
       genesis = create_genesis_block()
+
       save_chain_to_disk([genesis])
+
       [genesis]
     end
   end
@@ -177,15 +220,17 @@ defmodule Blockchain.Chain do
   defp create_genesis_block do
     sectors = Application.get_env(:blockchain, :sectors, default_sectors())
 
+    # Removido UUID dinâmico e timestamps variáveis para congelar o hash do Gênese
     transactions =
-      Enum.map(sectors, fn {sector_id, initial_balance} ->
+      Enum.with_index(sectors)
+      |> Enum.map(fn {{sector_id, initial_balance}, index} ->
         %Blockchain.Transaction{
-          id: UUIDv7.generate(),
+          id: "00000000-0000-0000-0000-00000000000" <> to_string(index),
           owner_id: sector_id,
           amount: initial_balance,
           type: :mint,
           mission_reason: "genesis",
-          timestamp: System.os_time(:second),
+          timestamp: 1_718_110_000,
           signature: "genesis"
         }
       end)
@@ -193,7 +238,7 @@ defmodule Blockchain.Chain do
     block = %Blockchain.Block{
       index: 0,
       previous_hash: "0000000000000000",
-      timestamp: System.os_time(:second),
+      timestamp: 1_718_110_000,
       data: transactions
     }
 

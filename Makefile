@@ -1,9 +1,13 @@
-NETWORK_NAME=maritime_network
-
 # --- Variáveis Padrão ---
 SECTOR_NAME ?= sector_local
 SECTOR_PORT ?= 5050
 SECTOR_HOSTS ?= ""
+
+# IPs/Nomes dos nós vizinhos para o --add-host (Ex: sector1:172.16.201.10)
+ADD_HOST ?= ""
+
+# Lista completa de mapeamento de todos os setores na blockchain
+BLOCKCHAIN_SECTORS ?= ""
 
 DRONE_ID ?= drone_$(shell date +%s)
 DRONE_PEERS ?= 127.0.0.1:5050
@@ -11,9 +15,9 @@ DRONE_PEERS ?= 127.0.0.1:5050
 SENSOR_HOST ?= 127.0.0.1:5050
 
 # Passkey de autenticação entre os nós (obrigatória)
-PASSKEY ?= ""
+PASSKEY ?= "maritime_luqueta_2026"
 
-.PHONY: help setup-network build-all build-sector build-drone build-sensor run-sector run-drone run-sensor
+.PHONY: help build-all build-sector build-drone build-sensor run-sector run-drone run-sensor
 
 .DEFAULT_GOAL := help
 
@@ -28,35 +32,19 @@ help:
 	@echo "  make build-drone     - Constrói a imagem apenas do Drone."
 	@echo "  make build-sensor    - Constrói a imagem apenas do Sensor."
 	@echo ""
-	@echo "Comandos de Execução:"
+	@echo "Comandos de Execução (Usando --network host e volumes):"
 	@echo "  make run-sector      - Inicia um nó do Setor."
 	@echo "  make run-drone       - Inicia um nó de Drone."
 	@echo "  make run-sensor      - Inicia um nó de Sensor."
 	@echo ""
-	@echo "  Todos os comandos de execução aceitam PASSKEY=<valor>:"
-	@echo "  make run-sector PASSKEY=minha_chave SECTOR_NAME=setor1 ..."
-	@echo ""
-	@echo "Exemplos de uso e Variáveis (LAN / Local):"
-	@echo ""
-	@echo "  A rede de Setores é P2P (Full Mesh). O ideal é que todos saibam os IPs dos"
-	@echo "  outros. O sistema possui reconexão automática, então não tem problema um"
-	@echo "  Setor tentar conectar em outro que ainda não subiu."
-	@echo ""
-	@echo "  1. Subir o primeiro Setor (PC 1 - 192.168.1.50) apontando para o PC 2:"
-	@echo "     make run-sector PASSKEY=abc123 SECTOR_NAME=setor1 SECTOR_PORT=5050 SECTOR_HOSTS=192.168.1.51:5050"
-	@echo ""
-	@echo "  2. Subir o segundo Setor (PC 2 - 192.168.1.51) apontando para o PC 1:"
-	@echo "     make run-sector PASSKEY=abc123 SECTOR_NAME=setor2 SECTOR_PORT=5050 SECTOR_HOSTS=192.168.1.50:5050"
-	@echo ""
-	@echo "  3. Subir um Drone apontando para um dos Setores:"
-	@echo "     make run-drone PASSKEY=abc123 DRONE_PEERS=192.168.1.50:5050"
-	@echo ""
-	@echo "  4. Subir um Sensor apontando para um dos Setores:"
-	@echo "     make run-sensor PASSKEY=abc123 SENSOR_HOST=192.168.1.50:5050"
+	@echo "Exemplo de execução idêntico ao seu comando manual:"
+	@echo "  make run-sector \\"
+	@echo "       SECTOR_NAME=sector2 \\"
+	@echo "       ADD_HOST=sector1:172.16.201.10 \\"
+	@echo "       SECTOR_HOSTS=sector1:5050 \\"
+	@echo "       BLOCKCHAIN_SECTORS=sector1:5050,sector2:5050 \\"
+	@echo "       PASSKEY=\"maritime_luqueta_2026\""
 	@echo "======================================================================"
-
-setup-network:
-	@docker network inspect $(NETWORK_NAME) >/dev/null 2>&1 || docker network create $(NETWORK_NAME)
 
 # --- COMANDOS DE BUILD ---
 build-sector:
@@ -71,28 +59,30 @@ build-sensor:
 build-all: build-sector build-drone build-sensor
 
 # --- COMANDOS DE EXECUÇÃO ---
-run-sector: setup-network build-sector
+run-sector: build-sector
 	docker run -it --rm \
 		--name $(SECTOR_NAME) \
-		--network $(NETWORK_NAME) \
-		-p $(SECTOR_PORT):$(SECTOR_PORT)/tcp \
+		--network host \
+		$(if $(ADD_HOST),--add-host $(ADD_HOST)) \
+		-v $(shell pwd)/chain.json:/app/chain.json \
 		-e NODE_NAME=$(SECTOR_NAME) \
 		-e TCP_PORT=$(SECTOR_PORT) \
 		-e HOSTS=$(SECTOR_HOSTS) \
+		-e BLOCKCHAIN_SECTORS=$(BLOCKCHAIN_SECTORS) \
 		-e PASSKEY=$(PASSKEY) \
 		maritime_sector
 
-run-drone: setup-network build-drone
+run-drone: build-drone
 	docker run -it --rm \
-		--network $(NETWORK_NAME) \
+		--network host \
 		-e DRONE_ID=$(DRONE_ID) \
 		-e TCP_PEERS=$(DRONE_PEERS) \
 		-e PASSKEY=$(PASSKEY) \
 		maritime_drone
 
-run-sensor: setup-network build-sensor
+run-sensor: build-sensor
 	docker run -it --rm \
-		--network $(NETWORK_NAME) \
+		--network host \
 		-e HOST=$(SENSOR_HOST) \
 		-e PASSKEY=$(PASSKEY) \
 		maritime_sensor

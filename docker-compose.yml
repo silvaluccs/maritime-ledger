@@ -20,6 +20,8 @@ services:
       ]
     ports:
       - "5051:5050"
+    volumes:
+      - sector1_data:/app
 
   sector2:
     build:
@@ -44,6 +46,8 @@ services:
       - "5052:5050"
     depends_on:
       - sector1
+    volumes:
+      - sector2_data:/app
 
   sector3:
     build:
@@ -69,6 +73,10 @@ services:
     depends_on:
       - sector1
       - sector2
+    volumes:
+      - sector3_data:/app
+
+
 
   drone1:
     build:
@@ -99,6 +107,11 @@ services:
       - sector1
       - sector2
       - sector3
+
+volumes:
+  sector1_data:
+  sector2_data:
+  sector3_data:
 
   # sensor1:
   #   build:

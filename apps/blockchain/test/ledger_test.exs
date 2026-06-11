@@ -15,6 +15,7 @@ defmodule Blockchain.LedgerTest do
     end
 
     File.rm("/tmp/maritime_chain_test.json")
+    Process.sleep(50)
 
     case Blockchain.Chain.start_link() do
       {:ok, _} -> :ok

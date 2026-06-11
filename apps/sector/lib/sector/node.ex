@@ -68,6 +68,8 @@ defmodule Sector.Node do
 
     Supervisor.start_link(children, strategy: :one_for_one)
 
+    Process.send_after(self(), :force_initial_chain_sync, 2000)
+
     state = %{
       node_id: node_id,
       clock: 0,
@@ -121,6 +123,20 @@ defmodule Sector.Node do
 
   @impl true
   def handle_cast({:peer_connected, address}, state) do
+    last_block = Blockchain.Chain.get_last_block()
+
+    sync_msg = %{
+      "type" => "chain_sync_request",
+      "from" => state.node_id,
+      "last_index" => last_block.index
+    }
+
+    Sector.TcpClient.send_to(address, sync_msg)
+
+    Logger.info(
+      "[CHAIN SYNC] Solicitando chain ao peer #{address} (meu último bloco: #{last_block.index})"
+    )
+
     if state.requesting? and not state.in_critical_section? do
       Logger.info(
         "[REQUEST] Novo peer #{address} conectou enquanto requisitando. Re-enviando REQUEST (TS=#{state.request_ts}, P=#{state.request_priority})."
@@ -339,6 +355,30 @@ defmodule Sector.Node do
   end
 
   @impl true
+  def handle_info(:force_initial_chain_sync, state) do
+    last_block = Blockchain.Chain.get_last_block()
+
+    sync_msg = %{
+      "type" => "chain_sync_request",
+      "from" => state.node_id,
+      "last_index" => last_block.index
+    }
+
+    Logger.info(
+      "[CHAIN SYNC] Executando sincronização forçada pós-boot. Transmitindo requisição..."
+    )
+
+    Sector.TcpClient.broadcast(sync_msg)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:try_critical_section, state) do
+    handle_info({:try_critical_section, nil}, state)
+  end
+
+  @impl true
   def handle_info({:try_critical_section, priority}, state) do
     if Blockchain.Ledger.has_balance?(state.node_id, 10) do
       {:ok, request, new_clock, new_counter} =
@@ -372,11 +412,6 @@ defmodule Sector.Node do
   @impl true
   def handle_info(:log_critical_section, state) when not state.in_critical_section? do
     {:noreply, state}
-  end
-
-  @impl true
-  def handle_info(:try_critical_section, state) do
-    handle_info({:try_critical_section, nil}, state)
   end
 
   def handle_info(:log_critical_section, state) do

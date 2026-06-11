@@ -1,47 +1,55 @@
 defmodule Blockchain.Consensus do
   @moduledoc false
   require Logger
-
   alias Blockchain.{Block, Chain}
 
   def propose(block) do
-    peers = get_peers()
+    case commit(block) do
+      {:ok, committed_block} ->
+        broadcast_to_peers(committed_block)
+        {:ok, committed_block}
 
-    if Enum.empty?(peers) do
-      Logger.info("[CONSENSUS] Sem peers — commit local direto")
-      commit(block)
-    else
-      Logger.info("[CONSENSUS] Propondo bloco #{block.index} para #{length(peers)} peer(s)")
-      collect_votes_and_commit(block, peers)
+      error ->
+        error
     end
   end
 
-  def receive_proposal(block) do
+  def receive_proposal(block_map) when is_map(block_map) do
+    block = Blockchain.Chain.decode_block_from_map(block_map)
     last = Chain.get_last_block()
 
     if validate(block, last) do
-      Logger.info("[CONSENSUS] Bloco #{block.index} validado — commitando")
-      commit(block)
+      Logger.info("[CONSENSUS] Bloco #{block.index} recebido de peer — commitando")
+      Chain.add_block(block)
       :approved
     else
-      Logger.warning("[CONSENSUS] Bloco #{block.index} inválido — rejeitado")
+      Logger.warning("[CONSENSUS] Bloco #{block.index} de peer REJEITADO")
       :rejected
     end
   end
 
-  defp collect_votes_and_commit(block, peers) do
-    total = length(peers) + 1
-    majority = div(total, 2) + 1
+  defp broadcast_to_peers(block) do
+    case Process.whereis(Sector.TcpClient) do
+      nil ->
+        Logger.debug("[CONSENSUS] TcpClient não disponível — sem propagação")
+        :ok
 
-    # Por ora coleta votos localmente     # Cada peer vai chamar receive_proposal via TCP
-    # meu próprio voto
-    votes_approved = 1
+      _pid ->
+        peers = network_adapter().connected_hosts()
 
-    if votes_approved >= majority do
-      commit(block)
-    else
-      Logger.warning("[CONSENSUS] Bloco #{block.index} não atingiu maioria — descartado")
-      {:error, :no_majority}
+        if Enum.empty?(peers) do
+          Logger.debug("[CONSENSUS] Sem peers para propagar bloco #{block.index}")
+        else
+          Logger.info("[CONSENSUS] Propagando bloco #{block.index} para #{length(peers)} peer(s)")
+
+          msg = %{
+            "type" => "block_proposal",
+            "from" => node_id(),
+            "block" => JSON.decode!(JSON.encode!(block))
+          }
+
+          network_adapter().broadcast(msg)
+        end
     end
   end
 
@@ -50,19 +58,23 @@ defmodule Blockchain.Consensus do
       block.hash == Block.calculate_hash(block)
   end
 
+  defp network_adapter do
+    Application.get_env(:blockchain, :network_adapter)
+  end
+
   defp commit(block) do
     case Chain.add_block(block) do
       :ok ->
-        Logger.info("[CONSENSUS] Bloco #{block.index} commitado na chain ✓")
+        Logger.info("[CONSENSUS] Bloco #{block.index} commitado ✓")
         {:ok, block}
 
       {:error, reason} ->
-        Logger.warning("[CONSENSUS] Falha ao commitar bloco #{block.index}: #{reason}")
+        Logger.warning("[CONSENSUS] Falha ao commitar: #{reason}")
         {:error, reason}
     end
   end
 
-  defp get_peers do
-    Application.get_env(:blockchain, :peers, [])
+  defp node_id do
+    System.get_env("NODE_NAME", "unknown") <> ":" <> System.get_env("TCP_PORT", "5050")
   end
 end

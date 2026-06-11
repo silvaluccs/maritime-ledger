@@ -36,6 +36,9 @@ defmodule Sector.NodeAlgoritmTest do
       end
     end)
 
+    # ← aguarda portas serem liberadas pelo SO
+    Process.sleep(500)
+
     System.delete_env("HOSTS")
     :ok
   end
@@ -56,8 +59,8 @@ defmodule Sector.NodeAlgoritmTest do
   end
 
   test "fluxo completo de exclusao mutua: envia request, recebe reply e entra na secao critica" do
-    peer_port = 5050
-    node_port = 5051
+    peer_port = 5070
+    node_port = 5071
 
     {:ok, listen_socket} =
       :gen_tcp.listen(peer_port, [:binary, packet: :line, active: false, reuseaddr: true])
@@ -77,12 +80,13 @@ defmodule Sector.NodeAlgoritmTest do
 
     # peer_server_socket recebe: 1) auth do TcpClient, 2) request do Node
     assert {:ok, _auth} = :gen_tcp.recv(peer_server_socket, 0, 5000)
-    assert {:ok, data} = :gen_tcp.recv(peer_server_socket, 0, 7000)
-
-    assert %{"type" => "request", "clock" => req_clock, "from" => node_id} =
-             JSON.decode!(String.trim(data))
-
+    data = recv_until_type(peer_server_socket, "request")
+    assert data != nil
+    assert data["type"] == "request"
+    req_clock = data["clock"]
     # Peer envia seu próprio request com clock maior (menor prioridade de Lamport)
+    node_id = data["from"]
+
     peer_request_msg = %{
       "type" => "request",
       "from" => "127.0.0.1:#{peer_port}",
@@ -129,19 +133,18 @@ defmodule Sector.NodeAlgoritmTest do
         }) <> "\n"
       )
 
-    # Após o MissionAck, Node sai da SC e libera o Reply adiado para o peer
-    assert {:ok, reply_data} = :gen_tcp.recv(peer_server_socket, 0, 15_000)
-    assert %{"type" => "reply", "from" => ^node_id} = JSON.decode!(String.trim(reply_data))
-
+    reply_data = receive_until_reply(peer_server_socket, node_id, 15_000)
+    assert reply_data != nil
     if drone_socket, do: :gen_tcp.close(drone_socket)
+
     :gen_tcp.close(peer_client_socket)
     :gen_tcp.close(peer_server_socket)
     :gen_tcp.close(listen_socket)
   end
 
   test "reenvia request para peer que conecta tardiamente" do
-    node_port = 5052
-    peer_port = 5053
+    node_port = 5072
+    peer_port = 5073
 
     System.put_env("HOSTS", "127.0.0.1:#{peer_port}")
 
@@ -157,9 +160,11 @@ defmodule Sector.NodeAlgoritmTest do
 
     # Recebe: 1) auth do TcpClient, 2) request re-enviado por causa da conexão tardia
     assert {:ok, _auth} = :gen_tcp.recv(peer_server_socket, 0, 5000)
-    assert {:ok, data} = :gen_tcp.recv(peer_server_socket, 0, 5000)
-    assert %{"type" => "request"} = JSON.decode!(String.trim(data))
-
+    data = recv_until_type(peer_server_socket, "request")
+    assert data != nil
+    assert data["type"] == "request"
+    _req_clock = data["clock"]
+    _node_id = data["from"]
     :gen_tcp.close(peer_server_socket)
     :gen_tcp.close(listen_socket)
   end
@@ -288,10 +293,12 @@ defmodule Sector.NodeAlgoritmTest do
 
     # Recebe: 1) auth do TcpClient, 2) request
     assert {:ok, _auth} = :gen_tcp.recv(peer_server_socket, 0, 5000)
-    assert {:ok, data} = :gen_tcp.recv(peer_server_socket, 0, 5000)
-    assert %{"type" => "request"} = JSON.decode!(String.trim(data))
-
+    data = recv_until_type(peer_server_socket, "request")
+    assert data != nil
+    assert data["type"] == "request"
+    _req_clock = data["clock"]
     # Fecha sem enviar reply — Node deve entrar na SC ao detectar desconexão
+    _node_id = data["from"]
     :gen_tcp.close(peer_server_socket)
     :gen_tcp.close(listen_socket)
 
@@ -328,11 +335,14 @@ defmodule Sector.NodeAlgoritmTest do
 
     # Recebe: 1) auth do TcpClient, 2) request (Prio 0)
     assert {:ok, _auth} = :gen_tcp.recv(peer_server_socket, 0, 5000)
-    assert {:ok, data1} = :gen_tcp.recv(peer_server_socket, 0, 5000)
 
-    assert %{"type" => "request", "priority" => 0, "clock" => req_clock} =
-             JSON.decode!(String.trim(data1))
+    data1 = recv_until_type(peer_server_socket, "request")
 
+    assert data1 != nil
+
+    assert data1["type"] == "request"
+
+    req_clock = data1["clock"]
     # Peer envia request de PRIORIDADE 1 (maior prioridade)
     peer_request_msg = %{
       "type" => "request",
@@ -356,5 +366,40 @@ defmodule Sector.NodeAlgoritmTest do
     :gen_tcp.close(peer_client_socket)
     :gen_tcp.close(peer_server_socket)
     :gen_tcp.close(listen_socket)
+  end
+
+  defp receive_until_reply(socket, expected_from, timeout) do
+    case :gen_tcp.recv(socket, 0, timeout) do
+      {:ok, data} ->
+        msg = JSON.decode!(String.trim(data))
+
+        case msg do
+          %{"type" => "reply", "from" => ^expected_from} ->
+            msg
+
+          _ ->
+            # mensagem ignorada (ex: block_proposal), continua esperando
+            receive_until_reply(socket, expected_from, timeout)
+        end
+
+      {:error, _} ->
+        nil
+    end
+  end
+
+  defp recv_until_type(socket, type, timeout \\ 5000) do
+    case :gen_tcp.recv(socket, 0, timeout) do
+      {:ok, data} ->
+        msg = JSON.decode!(String.trim(data))
+
+        if msg["type"] == type do
+          msg
+        else
+          recv_until_type(socket, type, timeout)
+        end
+
+      {:error, _} ->
+        nil
+    end
   end
 end

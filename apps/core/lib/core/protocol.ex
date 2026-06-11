@@ -246,4 +246,76 @@ defmodule Core.Protocol do
 
     def from_map(_), do: {:error, :invalid_message}
   end
+
+  defmodule BlockProposal do
+    @moduledoc """
+    Mensagem enviada por um setor para propagar um novo bloco da blockchain
+    para todos os peers conectados. O bloco é carregado como mapa genérico
+    para evitar dependência circular entre core e blockchain.
+    """
+    @derive JSON.Encoder
+    defstruct [:type, :block, :from]
+
+    def from_map(%{"type" => "block_proposal", "block" => block_map, "from" => from}) do
+      {:ok,
+       %__MODULE__{
+         type: :block_proposal,
+         block: block_map,
+         from: from
+       }}
+    end
+
+    def from_map(_), do: {:error, :invalid_message}
+  end
+
+  defmodule ChainSyncRequest do
+    @moduledoc """
+    Mensagem enviada por um setor ao reconectar a um peer,
+    solicitando a chain completa para sincronização.
+    Inclui o índice do último bloco local para que o peer
+    saiba se há blocos novos a enviar.
+    """
+    @derive JSON.Encoder
+    defstruct [:type, :from, :last_index]
+
+    def from_map(%{
+          "type" => "chain_sync_request",
+          "from" => from,
+          "last_index" => last_index
+        }) do
+      {:ok,
+       %__MODULE__{
+         type: :chain_sync_request,
+         from: from,
+         last_index: last_index
+       }}
+    end
+
+    def from_map(_), do: {:error, :invalid_message}
+  end
+
+  defmodule ChainSyncResponse do
+    @moduledoc """
+    Resposta a um ChainSyncRequest. Contém a chain completa do peer
+    como lista de mapas (sem structs) para evitar dependência circular.
+    O receptor vai comparar com sua chain local e substituir se necessário.
+    """
+    @derive JSON.Encoder
+    defstruct [:type, :from, :chain]
+
+    def from_map(%{
+          "type" => "chain_sync_response",
+          "from" => from,
+          "chain" => chain
+        }) do
+      {:ok,
+       %__MODULE__{
+         type: :chain_sync_response,
+         from: from,
+         chain: chain
+       }}
+    end
+
+    def from_map(_), do: {:error, :invalid_message}
+  end
 end

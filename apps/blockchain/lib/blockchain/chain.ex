@@ -17,6 +17,11 @@ defmodule Blockchain.Chain do
   def get_last_block, do: GenServer.call(__MODULE__, :get_last)
   def add_block(block), do: GenServer.call(__MODULE__, {:add_block, block})
   def valid_chain?, do: GenServer.call(__MODULE__, :valid_chain)
+  def decode_block_from_map(map), do: decode_block(map)
+
+  def maybe_replace_chain(chain_as_maps) do
+    GenServer.call(__MODULE__, {:maybe_replace_chain, chain_as_maps})
+  end
 
   @impl true
   def init(_opts) do
@@ -61,6 +66,48 @@ defmodule Blockchain.Chain do
       end)
 
     {:reply, valid, chain}
+  end
+
+  @impl true
+  def handle_call({:maybe_replace_chain, []}, _from, chain) do
+    Logger.warning("[CHAIN SYNC] Chain recebida está vazia — ignorando")
+    {:reply, :rejected, chain}
+  end
+
+  @impl true
+  def handle_call({:maybe_replace_chain, chain_as_maps}, _from, chain) do
+    incoming = Enum.map(chain_as_maps, &decode_block/1) |> Enum.reverse()
+
+    incoming_valid? =
+      incoming
+      |> Enum.reverse()
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.all?(fn [prev, curr] -> Blockchain.Block.validate_block(curr, prev) end)
+
+    local_length = length(chain)
+    incoming_length = length(incoming)
+
+    cond do
+      not incoming_valid? ->
+        Logger.warning("[CHAIN SYNC] Chain recebida é inválida — ignorando")
+        {:reply, :rejected, chain}
+
+      incoming_length <= local_length ->
+        Logger.info(
+          "[CHAIN SYNC] Chain recebida não é maior — ignorando (local: #{local_length}, recebida: #{incoming_length})"
+        )
+
+        {:reply, :ignored, chain}
+
+      true ->
+        Logger.info(
+          "[CHAIN SYNC] Substituindo chain local (#{local_length} → #{incoming_length} blocos)"
+        )
+
+        IO.puts("=== [SHELL] [CHAIN SYNC] ✅ Chain atualizada com #{incoming_length} blocos ===")
+        save_chain_to_disk(incoming)
+        {:reply, :replaced, incoming}
+    end
   end
 
   defp save_chain_to_disk(chain) do

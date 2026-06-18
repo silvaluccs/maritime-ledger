@@ -26,3 +26,4 @@ chain.json
 step-by-step.md
 apps/sector/chain_test.json
 chain_test.json
+.elixir_ls/build/test/.mix/cached_dot_formatter
